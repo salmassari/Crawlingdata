@@ -1,1 +1,5 @@
-### This tool refers to the orignal implementation : https://github.com/tsantalis/RefactoringMiner 
+This repo updated the source code to crawling data.
+
+###### The tool is sourced from: https://github.com/tsantalis/RefactoringMiner.
+
+
