@@ -1,41 +1,9 @@
 package org.refactoringminer.rm1;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import gr.uom.java.xmi.UMLModel;
 import gr.uom.java.xmi.UMLModelASTReader;
 import gr.uom.java.xmi.diff.UMLModelDiff;
-
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.io.StringWriter;
-import java.net.URL;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Enumeration;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.regex.Matcher;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
-
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.eclipse.jgit.errors.MissingObjectException;
@@ -46,27 +14,19 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.treewalk.TreeWalk;
-import org.kohsuke.github.GHCommit;
-import org.kohsuke.github.GHPullRequest;
-import org.kohsuke.github.GHPullRequestCommitDetail;
-import org.kohsuke.github.GHRepository;
-import org.kohsuke.github.GHRepositoryWrapper;
-import org.kohsuke.github.GHTree;
-import org.kohsuke.github.GHTreeEntry;
-import org.kohsuke.github.GitHub;
-import org.kohsuke.github.PagedIterable;
-import org.refactoringminer.api.Churn;
-import org.refactoringminer.api.GitHistoryRefactoringMiner;
-import org.refactoringminer.api.GitService;
-import org.refactoringminer.api.Refactoring;
-import org.refactoringminer.api.RefactoringHandler;
-import org.refactoringminer.api.RefactoringMinerTimedOutException;
-import org.refactoringminer.api.RefactoringType;
+import org.kohsuke.github.*;
+import org.refactoringminer.api.*;
 import org.refactoringminer.util.GitServiceImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.*;
+import java.net.URL;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.regex.Matcher;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 public class GitHistoryRefactoringMinerImpl implements GitHistoryRefactoringMiner {
 
@@ -74,6 +34,10 @@ public class GitHistoryRefactoringMinerImpl implements GitHistoryRefactoringMine
 	private Set<RefactoringType> refactoringTypesToConsider = null;
 	private GitHub gitHub;
 	public ArrayList<String> refactorCommit =  new ArrayList<>();
+	//CDetails is an Arrylist to store all commit details.
+	public ArrayList<CommitDetails> CDetails =  new ArrayList<CommitDetails>();
+
+
 	
 	public GitHistoryRefactoringMinerImpl() {
 		this.setRefactoringTypesToConsider(RefactoringType.ALL);
@@ -88,6 +52,9 @@ public class GitHistoryRefactoringMinerImpl implements GitHistoryRefactoringMine
 
 	public ArrayList<String> getRefactorCommit() {
 		return refactorCommit;
+	}
+	public ArrayList<CommitDetails> getCommit() {
+		return CDetails;
 	}
 
 	public String getCommitMessage(Repository repository, String branch, final RefactoringHandler handler) throws
@@ -119,17 +86,66 @@ public class GitHistoryRefactoringMinerImpl implements GitHistoryRefactoringMine
 		String projectName = projectFolder.getName();
 		
 		long time = System.currentTimeMillis();
+
 		while (i.hasNext()) {
 			RevCommit currentCommit = i.next();
+//			String line =String.valueOf(currentCommit.getParents());
+//			String[] gits= line.split("@");
+//			System.out.println("parent:"+gits[1]);
+
 			// this is where you should call currentCommit.getFullMessage();
-			System.out.println("ID: "+currentCommit.getName());
-			System.out.println("Short Message: "+currentCommit.getCommitterIdent());
-			refactorCommit.add(currentCommit.getFullMessage());
+//			System.out.println("ID: "+currentCommit.getName());
+//			System.out.println("Short Message: "+currentCommit.getShortMessage());
+//			System.out.println("Full Message: "+currentCommit.getFullMessage());
+//			System.out.println("Time: "+currentCommit.getCommitTime());
+//			System.out.println("Indenty: "+currentCommit.getCommitterIdent());
+			CDetails.add(new CommitDetails(currentCommit.getName(),currentCommit.getShortMessage(),currentCommit.getFullMessage(),currentCommit.getCommitTime(),
+			currentCommit.getCommitterIdent().toString()));
+//			refactorCommit.add(currentCommit.getFullMessage());
 
 			try {
 				List<Refactoring> refactoringsAtRevision = detectRefactorings(gitService, repository, handler, projectFolder, currentCommit);
 				refactoringsCount += refactoringsAtRevision.size();
 				
+			} catch (Exception e) {
+				logger.warn(String.format("Ignored revision %s due to error", currentCommit.getId().getName()), e);
+				try {
+					handler.handleException(currentCommit.getId().getName(),e);
+				}catch (Exception ee) {
+					System.out.println("I'm in Impl class");
+				}
+
+				errorCommitsCount++;
+			}
+
+			commitsCount++;
+			long time2 = System.currentTimeMillis();
+			if ((time2 - time) > 20000) {
+				time = time2;
+				logger.info(String.format("Processing %s [Commits: %d, Errors: %d, Refactorings: %d]", projectName, commitsCount, errorCommitsCount, refactoringsCount));
+			}
+		}
+
+		handler.onFinish(refactoringsCount, commitsCount, errorCommitsCount);
+		logger.info(String.format("Analyzed %s [Commits: %d, Errors: %d, Refactorings: %d]", projectName, commitsCount, errorCommitsCount, refactoringsCount));
+	}
+
+	private void detectTest(GitService gitService, Repository repository, final RefactoringHandler handler, Iterator<RevCommit> i) {
+		int commitsCount = 0;
+		int errorCommitsCount = 0;
+		int refactoringsCount = 0;
+
+		File metadataFolder = repository.getDirectory();
+		File projectFolder = metadataFolder.getParentFile();
+		String projectName = projectFolder.getName();
+
+		long time = System.currentTimeMillis();
+		while (i.hasNext()) {
+			RevCommit currentCommit = i.next();
+			try {
+				List<Refactoring> refactoringsAtRevision = detectRefactorings(gitService, repository, handler, projectFolder, currentCommit);
+				refactoringsCount += refactoringsAtRevision.size();
+
 			} catch (Exception e) {
 				logger.warn(String.format("Ignored revision %s due to error", currentCommit.getId().getName()), e);
 				handler.handleException(currentCommit.getId().getName(),e);
@@ -146,6 +162,39 @@ public class GitHistoryRefactoringMinerImpl implements GitHistoryRefactoringMine
 
 		handler.onFinish(refactoringsCount, commitsCount, errorCommitsCount);
 		logger.info(String.format("Analyzed %s [Commits: %d, Errors: %d, Refactorings: %d]", projectName, commitsCount, errorCommitsCount, refactoringsCount));
+	}
+
+//	public void detectAll(Repository repository, String branch, final RefactoringHandler handler) throws Exception {
+//		GitService gitService = new GitServiceImpl() {
+//			@Override
+//			public boolean isCommitAnalyzed(String sha1) {
+//				return handler.skipCommit(sha1);
+//			}
+//		};
+//		RevWalk walk = gitService.createAllRevsWalk(repository, branch);
+//		try {
+//			detectTest(gitService, repository, handler, walk.iterator());
+//		} finally {
+//			walk.dispose();
+//		}
+//	}
+
+	@Override
+	public void detectAll(Repository repository, String branch, final RefactoringHandler handler) throws Exception {
+		GitService gitService = new GitServiceImpl() {
+			@Override
+			public boolean isCommitAnalyzed(String sha1) {
+				return handler.skipCommit(sha1);
+			}
+		};
+		RevWalk walk = gitService.createAllRevsWalk(repository, branch);
+		try {
+			detect(gitService, repository, handler, walk.iterator());
+
+		} finally {
+			walk.dispose();
+
+		}
 	}
 
 	protected List<Refactoring> detectRefactorings(GitService gitService, Repository repository, final RefactoringHandler handler, File projectFolder, RevCommit currentCommit) throws Exception {
@@ -396,23 +445,7 @@ public class GitHistoryRefactoringMinerImpl implements GitHistoryRefactoringMine
 		return filteredList;
 	}
 	
-	@Override
-	public void detectAll(Repository repository, String branch, final RefactoringHandler handler) throws Exception {
-		GitService gitService = new GitServiceImpl() {
-			@Override
-			public boolean isCommitAnalyzed(String sha1) {
-				return handler.skipCommit(sha1);
-			}
-		};
-		RevWalk walk = gitService.createAllRevsWalk(repository, branch);
-		try {
-			detect(gitService, repository, handler, walk.iterator());
 
-		} finally {
-			walk.dispose();
-
-		}
-	}
 
 	@Override
 	public void fetchAndDetectNew(Repository repository, final RefactoringHandler handler) throws Exception {
@@ -538,6 +571,8 @@ public class GitHistoryRefactoringMinerImpl implements GitHistoryRefactoringMine
 		RevWalk walk = new RevWalk(repository);
 		try {
 			RevCommit commit = walk.parseCommit(repository.resolve(commitId));
+			CDetails.add(new CommitDetails(commit.getName(),commit.getShortMessage(),commit.getFullMessage(),commit.getCommitTime(),
+					commit.getCommitterIdent().toString()));
 			if (commit.getParentCount() > 0) {
 				walk.parseCommit(commit.getParent(0));
 				return gitService.churn(repository, commit);
